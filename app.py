@@ -29,30 +29,47 @@ SAMPLE_REVIEWS = {
 @st.cache_resource
 def load_trained_model():
     """
-    Load the pre-trained LSTM model from SavedModel format.
+    Load the pre-trained LSTM model.
+    Handles both Keras 2 and Keras 3 compatibility.
     """
     import warnings
     warnings.filterwarnings('ignore')
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-    # Check if SavedModel exists (saved_model.pb in the model directory)
+    # Check if SavedModel exists
     savedmodel_path = MODEL_DIR
 
     if os.path.exists(os.path.join(savedmodel_path, 'saved_model.pb')):
+        # Method 1: Try Keras 3 TFSMLayer (for SavedModel format)
+        try:
+            from tensorflow import keras
+            model = keras.layers.TFSMLayer(savedmodel_path, call_endpoint='serving_default')
+            return model, "tfsm_layer"
+        except Exception as e1:
+            pass
+
+        # Method 2: Try standard load_model (Keras 2 style)
         try:
             model = tf.keras.models.load_model(savedmodel_path)
             return model, "savedmodel"
-        except Exception as e:
-            st.error(f"Error loading SavedModel: {e}")
+        except Exception as e2:
+            pass
 
-    # Fallback: Try loading .h5 or .keras file
-    for ext in ['.h5', '.keras']:
+        # Method 3: Try with tf.saved_model.load
+        try:
+            model = tf.saved_model.load(savedmodel_path)
+            return model, "tf_saved_model"
+        except Exception as e3:
+            pass
+
+    # Method 4: Try loading .keras or .h5 file
+    for ext in ['.keras', '.h5']:
         h5_path = os.path.join(MODEL_DIR, f'sentiment_model{ext}')
         if os.path.exists(h5_path):
             try:
                 model = tf.keras.models.load_model(h5_path, compile=False)
                 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-                return model, f"h5_file({ext})"
+                return model, f"keras_file({ext})"
             except:
                 pass
 
@@ -74,13 +91,35 @@ def preprocess_text(text, tokenizer):
     return padded
 
 
+def get_prediction(model, padded_input):
+    """
+    Get prediction from model, handling different model types.
+    TFSMLayer returns dict, regular model returns array.
+    """
+    result = model(padded_input)
+
+    # Handle TFSMLayer output (returns dictionary)
+    if isinstance(result, dict):
+        # Get the first output key
+        key = list(result.keys())[0]
+        return float(result[key].numpy()[0][0])
+    # Handle regular model output
+    elif hasattr(result, 'numpy'):
+        return float(result.numpy()[0][0])
+    else:
+        return float(result[0][0])
+
+
 def verify_model(model, tokenizer):
     """Verify model produces different outputs for positive vs negative text."""
     pos_text = "This movie was amazing fantastic wonderful excellent masterpiece"
     neg_text = "This movie was terrible awful horrible worst disaster"
 
-    pos_pred = float(model.predict(preprocess_text(pos_text, tokenizer), verbose=0)[0][0])
-    neg_pred = float(model.predict(preprocess_text(neg_text, tokenizer), verbose=0)[0][0])
+    pos_padded = preprocess_text(pos_text, tokenizer)
+    neg_padded = preprocess_text(neg_text, tokenizer)
+
+    pos_pred = get_prediction(model, pos_padded)
+    neg_pred = get_prediction(model, neg_padded)
 
     # Model should give higher score for positive text
     is_working = pos_pred > neg_pred and abs(pos_pred - neg_pred) > 0.1
@@ -90,7 +129,7 @@ def verify_model(model, tokenizer):
 def predict_sentiment(text, model, tokenizer):
     """Generate sentiment prediction."""
     padded = preprocess_text(text, tokenizer)
-    prediction = float(model.predict(padded, verbose=0)[0][0])
+    prediction = get_prediction(model, padded)
 
     # Determine sentiment with uncertain zone
     if prediction >= 0.6:

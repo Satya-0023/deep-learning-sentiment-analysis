@@ -424,5 +424,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <p align="center">
-  Made with ❤️ for Academic Machine Learning Project
+  Made with ❤️ for Academic Deep Learning Project
 </p>

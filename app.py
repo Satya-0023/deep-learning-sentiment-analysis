@@ -188,68 +188,62 @@ def predict_sentiment(text, model, tokenizer):
     return confidence
 
 
-def get_sentiment_label(confidence):
+def get_sentiment_label(prediction):
     """
-    Determine sentiment label based on confidence score.
+    Determine sentiment label based on prediction score.
 
-    Uses an uncertain zone (0.4 - 0.6) to avoid misleading predictions
-    near the decision boundary.
+    Uses standard sigmoid classification threshold of 0.5:
+    - >= 0.5 → Positive
+    - < 0.5 → Negative
 
     Args:
-        confidence (float): Model output probability (0.0 to 1.0)
+        prediction (float): Model output probability (0.0 to 1.0)
 
     Returns:
         tuple: (sentiment_label, emoji)
     """
-    if confidence > 0.6:
+    if prediction >= 0.5:
         return "POSITIVE", "😊"
-    elif confidence < 0.4:
-        return "NEGATIVE", "😞"
     else:
-        return "UNCERTAIN", "⚠️"
+        return "NEGATIVE", "😞"
 
 
-def get_confidence_level(confidence):
+def get_confidence_level(prediction):
     """
-    Classify confidence level based on prediction probability.
+    Classify confidence level based on how far prediction is from 0.5.
 
     Args:
-        confidence (float): Model output probability (0.0 to 1.0)
+        prediction (float): Model output probability (0.0 to 1.0)
 
     Returns:
         tuple: (confidence_level, display_type)
     """
-    if confidence > 0.75 or confidence < 0.25:
+    distance = abs(prediction - 0.5)
+    if distance >= 0.3:  # > 0.8 or < 0.2
         return "High", "success"
-    elif confidence > 0.60 or confidence < 0.40:
+    elif distance >= 0.15:  # 0.65-0.8 or 0.2-0.35
         return "Medium", "info"
-    else:
+    else:  # 0.35-0.65
         return "Low", "warning"
 
 
-def get_confidence_percent(confidence):
+def get_confidence_percent(prediction):
     """
-    Convert confidence to display percentage.
+    Convert prediction to display confidence percentage.
 
-    For positive predictions (>0.5): shows confidence as-is
-    For negative predictions (<0.5): shows inverted confidence (1 - confidence)
-    For uncertain (0.4-0.6): shows distance from 0.5
+    For positive predictions (>=0.5): shows prediction as confidence
+    For negative predictions (<0.5): shows (1 - prediction) as confidence
 
     Args:
-        confidence (float): Model output probability (0.0 to 1.0)
+        prediction (float): Model output probability (0.0 to 1.0)
 
     Returns:
         float: Confidence percentage for display
     """
-    if confidence > 0.6:
-        # Positive: confidence represents positive probability
-        return confidence * 100
-    elif confidence < 0.4:
-        # Negative: invert to show confidence in negative prediction
-        return (1 - confidence) * 100
+    if prediction >= 0.5:
+        return prediction * 100
     else:
-        # Uncertain: show how close to 50% (low confidence)
-        return (0.5 - abs(confidence - 0.5)) * 200  # Scale uncertainty
+        return (1 - prediction) * 100
 
 
 def verify_model_working(model, tokenizer):
@@ -263,8 +257,9 @@ def verify_model_working(model, tokenizer):
     seq_pos = tokenizer.texts_to_sequences([test_positive])
     seq_neg = tokenizer.texts_to_sequences([test_negative])
 
-    pad_pos = pad_sequences(seq_pos, maxlen=200, padding='post', truncating='post')
-    pad_neg = pad_sequences(seq_neg, maxlen=200, padding='post', truncating='post')
+    # Use default padding='pre' to match training
+    pad_pos = pad_sequences(seq_pos, maxlen=200)
+    pad_neg = pad_sequences(seq_neg, maxlen=200)
 
     pred_pos = float(model.predict(pad_pos, verbose=0)[0][0])
     pred_neg = float(model.predict(pad_neg, verbose=0)[0][0])
@@ -381,7 +376,7 @@ def main():
 
             with st.spinner("Analyzing sentiment..."):
                 # Get model prediction (probability score)
-                confidence = predict_sentiment(user_input, model, tokenizer)
+                prediction = predict_sentiment(user_input, model, tokenizer)
 
             st.divider()
             st.subheader("📊 Analysis Results")
@@ -391,9 +386,9 @@ def main():
                 st.warning("⚠️ Your input is very short. For better accuracy, please enter a longer movie review (at least 10-20 words).")
 
             # Determine sentiment label and confidence level
-            sentiment_label, sentiment_emoji = get_sentiment_label(confidence)
-            confidence_level, confidence_type = get_confidence_level(confidence)
-            confidence_percent = get_confidence_percent(confidence)
+            sentiment_label, sentiment_emoji = get_sentiment_label(prediction)
+            confidence_level, confidence_type = get_confidence_level(prediction)
+            confidence_percent = get_confidence_percent(prediction)
 
             # Results display - 3 columns
             col1, col2, col3 = st.columns(3)
@@ -418,40 +413,51 @@ def main():
 
             # Sentiment Score Bar
             st.markdown("**Sentiment Score:**")
-            st.progress(confidence)
+            st.progress(prediction)
 
             # Score bar labels
             col_neg, col_mid, col_pos = st.columns([1, 1, 1])
             with col_neg:
                 st.caption("← Negative (0%)")
             with col_mid:
-                st.caption("Uncertain")
+                st.caption("| 50% |")
             with col_pos:
                 st.caption("Positive (100%) →")
 
             # Raw score display
-            st.caption(f"Raw Model Output: {confidence:.4f} ({confidence * 100:.2f}%)")
+            st.caption(f"Raw Model Output: {prediction:.4f} ({prediction * 100:.2f}%)")
 
             # Interpretation message
             st.markdown("---")
             st.markdown("**Interpretation:**")
 
-            if sentiment_label == "UNCERTAIN":
-                st.warning(f"""
-                🤔 **Uncertain Prediction**
+            if confidence_level == "Low":
+                if sentiment_label == "POSITIVE":
+                    st.warning(f"""
+                    ✅ **Positive Sentiment (Low Confidence)**
 
-                The model prediction is in the **uncertain zone** (score: {confidence:.2%}).
+                    The model predicts **POSITIVE** but with low confidence ({confidence_percent:.1f}%).
 
-                This means the model cannot confidently classify the sentiment as positive or negative.
+                    The prediction is close to the decision boundary (50%), which may indicate:
+                    - Mixed sentiments in the review
+                    - Ambiguous or unclear text
+                    - Text not strongly related to movie reviews
 
-                **Possible reasons:**
-                - The text contains mixed sentiments
-                - The text is too short or unclear
-                - The text is not related to movie reviews
-                - The sentiment is genuinely neutral
+                    **Tip:** Longer reviews with clearer positive/negative language give better results.
+                    """)
+                else:
+                    st.warning(f"""
+                    ❌ **Negative Sentiment (Low Confidence)**
 
-                **Tip:** Try entering a longer, more detailed movie review with clearer positive or negative language.
-                """)
+                    The model predicts **NEGATIVE** but with low confidence ({confidence_percent:.1f}%).
+
+                    The prediction is close to the decision boundary (50%), which may indicate:
+                    - Mixed sentiments in the review
+                    - Ambiguous or unclear text
+                    - Text not strongly related to movie reviews
+
+                    **Tip:** Longer reviews with clearer positive/negative language give better results.
+                    """)
             elif sentiment_label == "POSITIVE":
                 if confidence_level == "High":
                     st.success(f"""
@@ -513,28 +519,28 @@ def main():
 
         ### Prediction Logic
 
-        The model outputs a probability score between 0 and 1:
+        The model outputs a sigmoid probability (0 to 1):
 
-        | Score Range | Sentiment | Description |
-        |-------------|-----------|-------------|
-        | **> 0.60** | Positive 😊 | Confident positive prediction |
-        | **0.40 - 0.60** | Uncertain ⚠️ | Model is not confident |
-        | **< 0.40** | Negative 😞 | Confident negative prediction |
+        | Score | Sentiment |
+        |-------|-----------|
+        | **≥ 0.50** | Positive 😊 |
+        | **< 0.50** | Negative 😞 |
 
         ### Confidence Levels
 
-        | Confidence Level | Score Range |
-        |------------------|-------------|
-        | **High** | > 75% or < 25% |
-        | **Medium** | 60-75% or 25-40% |
-        | **Low** | 40-60% (Uncertain Zone) |
+        Based on distance from decision boundary (0.5):
+
+        | Distance from 0.5 | Level |
+        |-------------------|-------|
+        | **≥ 0.30** (>80% or <20%) | High |
+        | **0.15 - 0.30** (65-80% or 20-35%) | Medium |
+        | **< 0.15** (35-65%) | Low |
 
         ### Limitations
 
         - **Domain-Specific:** Trained only on movie reviews
         - **English Only:** Only understands English text
         - **Grammar Sensitive:** Works better with proper grammar
-        - **Context:** May miss sarcasm or irony
 
         ### Best Practices
 

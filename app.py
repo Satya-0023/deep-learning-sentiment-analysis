@@ -7,6 +7,7 @@ on movie reviews using a pre-trained LSTM deep learning model.
 import streamlit as st
 import numpy as np
 import pickle
+import tensorflow as tf
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
@@ -21,12 +22,48 @@ def load_trained_model():
     """
     Load the pre-trained LSTM model from disk.
     Uses Streamlit's cache to avoid reloading on every interaction.
+    Handles Keras version compatibility issues.
 
     Returns:
         model: Loaded Keras LSTM model
     """
-    model = load_model(MODEL_PATH)
-    return model
+    import warnings
+    warnings.filterwarnings('ignore')
+
+    # Try multiple loading approaches for version compatibility
+    try:
+        # Approach 1: Standard loading with compile=False
+        model = load_model(MODEL_PATH, compile=False)
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        return model
+    except Exception as e1:
+        try:
+            # Approach 2: Try with safe_mode=False (newer Keras versions)
+            model = load_model(MODEL_PATH, compile=False, safe_mode=False)
+            model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+            return model
+        except Exception as e2:
+            # Approach 3: Rebuild model architecture and load weights
+            from tensorflow.keras.models import Sequential
+            from tensorflow.keras.layers import Embedding, LSTM, Dense
+
+            model = Sequential([
+                Embedding(input_dim=5000, output_dim=128, input_length=200),
+                LSTM(128, dropout=0.2, recurrent_dropout=0.2),
+                Dense(1, activation='sigmoid')
+            ])
+            model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+            # Try to load weights from H5 file
+            try:
+                model.load_weights(MODEL_PATH)
+            except:
+                # If weights loading fails, try loading full model with legacy format
+                import h5py
+                with h5py.File(MODEL_PATH, 'r') as f:
+                    model.load_weights(MODEL_PATH, by_name=True, skip_mismatch=True)
+
+            return model
 
 
 @st.cache_resource

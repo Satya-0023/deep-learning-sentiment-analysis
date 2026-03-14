@@ -35,36 +35,113 @@ def load_trained_model():
     Handles Keras version compatibility issues.
     """
     import warnings
+    import os
     warnings.filterwarnings('ignore')
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+    # Method 1: Try standard loading
     try:
         model = load_model(MODEL_PATH, compile=False)
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model
+        return model, "standard"
     except Exception as e1:
-        try:
-            model = load_model(MODEL_PATH, compile=False, safe_mode=False)
-            model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-            return model
-        except Exception as e2:
-            from tensorflow.keras.models import Sequential
-            from tensorflow.keras.layers import Embedding, LSTM, Dense
+        pass
 
-            model = Sequential([
-                Embedding(input_dim=5000, output_dim=128, input_length=200),
-                LSTM(128, dropout=0.2, recurrent_dropout=0.2),
-                Dense(1, activation='sigmoid')
-            ])
-            model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    # Method 2: Try with safe_mode=False (newer Keras)
+    try:
+        model = load_model(MODEL_PATH, compile=False, safe_mode=False)
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        return model, "safe_mode_false"
+    except Exception as e2:
+        pass
 
-            try:
-                model.load_weights(MODEL_PATH)
-            except:
-                import h5py
-                with h5py.File(MODEL_PATH, 'r') as f:
-                    model.load_weights(MODEL_PATH, by_name=True, skip_mismatch=True)
+    # Method 3: Use custom_objects to handle unknown arguments
+    try:
+        import tensorflow as tf
+        from tensorflow.keras.layers import Embedding
 
-            return model
+        # Create custom Embedding class that ignores unknown kwargs
+        class CustomEmbedding(Embedding):
+            def __init__(self, *args, **kwargs):
+                # Remove unknown kwargs
+                kwargs.pop('quantization_config', None)
+                super().__init__(*args, **kwargs)
+
+        custom_objects = {'Embedding': CustomEmbedding}
+        model = load_model(MODEL_PATH, compile=False, custom_objects=custom_objects)
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        return model, "custom_objects"
+    except Exception as e3:
+        pass
+
+    # Method 4: Load using TF SavedModel format if available
+    try:
+        import tensorflow as tf
+        # Try loading as SavedModel
+        model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        return model, "tf_keras"
+    except Exception as e4:
+        pass
+
+    # Method 5: Extract weights from H5 file and rebuild model
+    try:
+        import h5py
+        from tensorflow.keras.models import Sequential
+        from tensorflow.keras.layers import Embedding, LSTM, Dense
+
+        # Build model with same architecture
+        model = Sequential([
+            Embedding(input_dim=5000, output_dim=128, input_length=200, name='embedding'),
+            LSTM(128, dropout=0.2, recurrent_dropout=0.2, name='lstm'),
+            Dense(1, activation='sigmoid', name='dense')
+        ])
+        model.build(input_shape=(None, 200))
+
+        # Extract and set weights from H5 file
+        with h5py.File(MODEL_PATH, 'r') as f:
+            # Navigate H5 structure to find weights
+            if 'model_weights' in f:
+                weights_group = f['model_weights']
+            else:
+                weights_group = f
+
+            # Try to load weights layer by layer
+            for layer in model.layers:
+                layer_name = layer.name
+                # Check various possible naming conventions
+                possible_names = [
+                    layer_name,
+                    f'{layer_name}_1',
+                    layer_name.replace('_', ''),
+                ]
+
+                for name in possible_names:
+                    if name in weights_group:
+                        layer_weights = []
+                        layer_group = weights_group[name]
+                        if name in layer_group:
+                            layer_group = layer_group[name]
+                        for weight_name in layer_group:
+                            layer_weights.append(np.array(layer_group[weight_name]))
+                        if layer_weights:
+                            try:
+                                layer.set_weights(layer_weights)
+                            except:
+                                pass
+                        break
+
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        return model, "h5_extract"
+    except Exception as e5:
+        pass
+
+    # If all methods fail, raise error with instructions
+    raise RuntimeError(
+        "Could not load model. Please try:\n"
+        "1. Upgrade TensorFlow: pip install --upgrade tensorflow\n"
+        "2. Or re-save the model in Colab using: model.save('sentiment_model.keras')"
+    )
 
 
 @st.cache_resource
@@ -80,11 +157,13 @@ def preprocess_text(text, tokenizer, max_length=MAX_SEQUENCE_LENGTH):
     Preprocess input text for model prediction.
 
     Pipeline: Text → Tokenizer → Sequence → Padding (200 tokens)
+
+    IMPORTANT: Use default padding='pre' to match training preprocessing.
     """
     # Convert text to sequence of integers
     sequences = tokenizer.texts_to_sequences([text])
-    # Pad sequence to fixed length of 200 tokens
-    padded_sequence = pad_sequences(sequences, maxlen=max_length, padding='post', truncating='post')
+    # Pad sequence to fixed length of 200 tokens (default padding='pre' to match training)
+    padded_sequence = pad_sequences(sequences, maxlen=max_length)
     return padded_sequence
 
 
@@ -173,6 +252,30 @@ def get_confidence_percent(confidence):
         return (0.5 - abs(confidence - 0.5)) * 200  # Scale uncertainty
 
 
+def verify_model_working(model, tokenizer):
+    """
+    Verify that the model is producing valid predictions.
+    Tests with known positive and negative samples.
+    """
+    test_positive = "This movie was absolutely amazing and fantastic"
+    test_negative = "This movie was terrible awful and boring"
+
+    seq_pos = tokenizer.texts_to_sequences([test_positive])
+    seq_neg = tokenizer.texts_to_sequences([test_negative])
+
+    pad_pos = pad_sequences(seq_pos, maxlen=200, padding='post', truncating='post')
+    pad_neg = pad_sequences(seq_neg, maxlen=200, padding='post', truncating='post')
+
+    pred_pos = float(model.predict(pad_pos, verbose=0)[0][0])
+    pred_neg = float(model.predict(pad_neg, verbose=0)[0][0])
+
+    # Check if model differentiates between positive and negative
+    # Positive should be > 0.5, Negative should be < 0.5
+    is_working = (pred_pos > pred_neg) and (abs(pred_pos - pred_neg) > 0.1)
+
+    return is_working, pred_pos, pred_neg
+
+
 def main():
     """Main function to run the Streamlit application."""
 
@@ -203,11 +306,38 @@ def main():
 
     # Load model and tokenizer
     try:
-        model = load_trained_model()
+        model, load_method = load_trained_model()
         tokenizer = load_tokenizer()
+
+        # Verify model is working correctly
+        is_working, test_pos, test_neg = verify_model_working(model, tokenizer)
+
+        if is_working:
+            st.success(f"✅ Model loaded successfully! (Method: {load_method})")
+        else:
+            st.warning(f"""
+            ⚠️ Model loaded but may not be working correctly.
+
+            **Debug Info:**
+            - Load method: {load_method}
+            - Test positive score: {test_pos:.4f}
+            - Test negative score: {test_neg:.4f}
+
+            **Possible Fix:** Please upgrade TensorFlow:
+            ```
+            pip install --upgrade tensorflow
+            ```
+            Or re-download the model from Google Colab.
+            """)
+
     except Exception as e:
         st.error(f"❌ Error loading model: {str(e)}")
-        st.info("Please ensure model files are in the 'model/' directory.")
+        st.info("""
+        **Troubleshooting:**
+        1. Ensure model files are in the 'model/' directory
+        2. Try upgrading TensorFlow: `pip install --upgrade tensorflow`
+        3. Re-save the model in Colab using `.keras` format
+        """)
         return
 
     # Two columns: Input and Examples

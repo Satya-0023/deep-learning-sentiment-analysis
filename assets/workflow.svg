@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400">
+  <defs>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90D9;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357ABD;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="greenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#5CB85C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#449D44;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F0AD4E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EC971F;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#9B59B6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8E44AD;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="redGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#E74C3C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#C0392B;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="400" fill="#f8f9fa"/>
+
+  <!-- Title -->
+  <text x="600" y="40" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#2c3e50">
+    Sentiment Analysis ML Pipeline Workflow
+  </text>
+
+  <!-- Row 1: Data Pipeline -->
+  <!-- Dataset Box -->
+  <rect x="30" y="80" width="120" height="70" rx="10" fill="url(#blueGrad)" filter="url(#shadow)"/>
+  <text x="90" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Dataset</text>
+  <text x="90" y="128" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">IMDB 50K</text>
+  <text x="90" y="142" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Reviews</text>
+
+  <!-- Arrow 1 -->
+  <path d="M 155 115 L 185 115" stroke="#666" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <polygon points="185,115 175,110 175,120" fill="#666"/>
+
+  <!-- Preprocessing Box -->
+  <rect x="190" y="80" width="120" height="70" rx="10" fill="url(#orangeGrad)" filter="url(#shadow)"/>
+  <text x="250" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Preprocessing</text>
+  <text x="250" y="128" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Clean &amp; Normalize</text>
+  <text x="250" y="142" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Text Data</text>
+
+  <!-- Arrow 2 -->
+  <path d="M 315 115 L 345 115" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="345,115 335,110 335,120" fill="#666"/>
+
+  <!-- Tokenization Box -->
+  <rect x="350" y="80" width="120" height="70" rx="10" fill="url(#greenGrad)" filter="url(#shadow)"/>
+  <text x="410" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Tokenization</text>
+  <text x="410" y="128" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Text → Sequences</text>
+  <text x="410" y="142" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">[45, 89, 12...]</text>
+
+  <!-- Arrow 3 -->
+  <path d="M 475 115 L 505 115" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="505,115 495,110 495,120" fill="#666"/>
+
+  <!-- Padding Box -->
+  <rect x="510" y="80" width="120" height="70" rx="10" fill="url(#purpleGrad)" filter="url(#shadow)"/>
+  <text x="570" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Padding</text>
+  <text x="570" y="128" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Fixed Length</text>
+  <text x="570" y="142" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">200 Tokens</text>
+
+  <!-- Arrow 4 (down) -->
+  <path d="M 570 155 L 570 185" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="570,190 565,180 575,180" fill="#666"/>
+
+  <!-- Row 2: Model Pipeline -->
+  <!-- LSTM Model Box -->
+  <rect x="510" y="195" width="120" height="70" rx="10" fill="url(#redGrad)" filter="url(#shadow)"/>
+  <text x="570" y="225" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">LSTM Model</text>
+  <text x="570" y="243" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Embedding →</text>
+  <text x="570" y="257" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">LSTM → Dense</text>
+
+  <!-- Arrow 5 -->
+  <path d="M 635 230 L 665 230" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="665,230 655,225 655,235" fill="#666"/>
+
+  <!-- Training Box -->
+  <rect x="670" y="195" width="120" height="70" rx="10" fill="url(#blueGrad)" filter="url(#shadow)"/>
+  <text x="730" y="225" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Training</text>
+  <text x="730" y="243" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">10 Epochs</text>
+  <text x="730" y="257" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Adam Optimizer</text>
+
+  <!-- Arrow 6 -->
+  <path d="M 795 230 L 825 230" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="825,230 815,225 815,235" fill="#666"/>
+
+  <!-- Evaluation Box -->
+  <rect x="830" y="195" width="120" height="70" rx="10" fill="url(#orangeGrad)" filter="url(#shadow)"/>
+  <text x="890" y="225" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Evaluation</text>
+  <text x="890" y="243" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Accuracy &amp;</text>
+  <text x="890" y="257" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">F1-Score</text>
+
+  <!-- Arrow 7 -->
+  <path d="M 955 230 L 985 230" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="985,230 975,225 975,235" fill="#666"/>
+
+  <!-- Save Model Box -->
+  <rect x="990" y="195" width="120" height="70" rx="10" fill="url(#greenGrad)" filter="url(#shadow)"/>
+  <text x="1050" y="225" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Save Model</text>
+  <text x="1050" y="243" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">.h5 &amp; .pkl</text>
+  <text x="1050" y="257" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Files</text>
+
+  <!-- Arrow 8 (down) -->
+  <path d="M 1050 270 L 1050 300" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="1050,305 1045,295 1055,295" fill="#666"/>
+
+  <!-- Row 3: Deployment -->
+  <!-- Streamlit App Box -->
+  <rect x="910" y="310" width="140" height="70" rx="10" fill="url(#redGrad)" filter="url(#shadow)"/>
+  <text x="980" y="340" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Streamlit App</text>
+  <text x="980" y="358" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Web Interface</text>
+  <text x="980" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">localhost:8501</text>
+
+  <!-- Arrow 9 -->
+  <path d="M 905 345 L 875 345" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="870,345 880,340 880,350" fill="#666"/>
+
+  <!-- User Input Box -->
+  <rect x="730" y="310" width="140" height="70" rx="10" fill="url(#purpleGrad)" filter="url(#shadow)"/>
+  <text x="800" y="340" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">User Input</text>
+  <text x="800" y="358" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Enter Movie</text>
+  <text x="800" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">Review Text</text>
+
+  <!-- Arrow 10 -->
+  <path d="M 725 345 L 695 345" stroke="#666" stroke-width="2" fill="none"/>
+  <polygon points="690,345 700,340 700,350" fill="#666"/>
+
+  <!-- Prediction Output Box -->
+  <rect x="550" y="310" width="140" height="70" rx="10" fill="url(#greenGrad)" filter="url(#shadow)"/>
+  <text x="620" y="335" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Prediction</text>
+  <text x="620" y="358" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="white">Positive 😊</text>
+  <text x="620" y="375" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white">or Negative 😞</text>
+
+  <!-- Legend -->
+  <rect x="30" y="310" width="200" height="70" rx="5" fill="white" stroke="#ddd" stroke-width="1"/>
+  <text x="130" y="330" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#333">Legend</text>
+  <rect x="45" y="340" width="15" height="12" fill="url(#blueGrad)"/>
+  <text x="65" y="350" font-family="Arial, sans-serif" font-size="9" fill="#333">Data</text>
+  <rect x="100" y="340" width="15" height="12" fill="url(#orangeGrad)"/>
+  <text x="120" y="350" font-family="Arial, sans-serif" font-size="9" fill="#333">Process</text>
+  <rect x="155" y="340" width="15" height="12" fill="url(#greenGrad)"/>
+  <text x="175" y="350" font-family="Arial, sans-serif" font-size="9" fill="#333">Output</text>
+  <rect x="45" y="358" width="15" height="12" fill="url(#purpleGrad)"/>
+  <text x="65" y="368" font-family="Arial, sans-serif" font-size="9" fill="#333">Transform</text>
+  <rect x="100" y="358" width="15" height="12" fill="url(#redGrad)"/>
+  <text x="120" y="368" font-family="Arial, sans-serif" font-size="9" fill="#333">Model/App</text>
+</svg>

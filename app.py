@@ -8,16 +8,13 @@ Pipeline: User Input → Tokenizer → Sequence → Padding (200) → LSTM Model
 import streamlit as st
 import numpy as np
 import pickle
-import h5py
 import os
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Embedding, LSTM, Dense
+import tensorflow as tf
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 # Constants
 MAX_SEQUENCE_LENGTH = 200
-MODEL_PATH_H5 = "model/sentiment_model.h5"
-MODEL_PATH_KERAS = "model/sentiment_model.keras"
+MODEL_DIR = "model"  # SavedModel format directory
 TOKENIZER_PATH = "model/tokenizer.pkl"
 
 # Sample reviews for demo
@@ -29,168 +26,37 @@ SAMPLE_REVIEWS = {
 }
 
 
-def build_model():
-    """Build the LSTM model architecture."""
-    model = Sequential([
-        Embedding(input_dim=5000, output_dim=128, input_length=200, name='embedding'),
-        LSTM(128, dropout=0.2, recurrent_dropout=0.2, name='lstm'),
-        Dense(1, activation='sigmoid', name='dense')
-    ])
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    return model
-
-
-def load_weights_from_h5(model, h5_path):
-    """
-    Extract weights from H5 file and load into model.
-    This handles Keras 3.x to Keras 2.x compatibility issues.
-    """
-    with h5py.File(h5_path, 'r') as f:
-        # Print structure for debugging
-        def print_structure(name, obj):
-            pass  # Uncomment below for debugging
-            # print(name)
-        # f.visititems(print_structure)
-
-        # Try different H5 structures (Keras saves in different formats)
-
-        # Structure 1: model_weights/layer_name/layer_name/weight_name
-        if 'model_weights' in f:
-            weights_group = f['model_weights']
-        else:
-            weights_group = f
-
-        # Load Embedding weights
-        embedding_loaded = False
-        for path in ['embedding/embedding/embeddings:0', 'embedding/embeddings:0',
-                     'embedding_1/embedding_1/embeddings:0', 'embedding_1/embeddings:0']:
-            try:
-                parts = path.split('/')
-                group = weights_group
-                for part in parts[:-1]:
-                    if part in group:
-                        group = group[part]
-                if parts[-1] in group:
-                    emb_weights = np.array(group[parts[-1]])
-                    model.layers[0].set_weights([emb_weights])
-                    embedding_loaded = True
-                    break
-            except:
-                continue
-
-        # Load LSTM weights
-        lstm_loaded = False
-        for prefix in ['lstm', 'lstm_1']:
-            try:
-                if prefix in weights_group:
-                    lstm_group = weights_group[prefix]
-                    if prefix in lstm_group:
-                        lstm_group = lstm_group[prefix]
-
-                    kernel = None
-                    recurrent = None
-                    bias = None
-
-                    for key in lstm_group.keys():
-                        if 'kernel' in key and 'recurrent' not in key:
-                            kernel = np.array(lstm_group[key])
-                        elif 'recurrent_kernel' in key:
-                            recurrent = np.array(lstm_group[key])
-                        elif 'bias' in key:
-                            bias = np.array(lstm_group[key])
-
-                    if kernel is not None and recurrent is not None and bias is not None:
-                        model.layers[1].set_weights([kernel, recurrent, bias])
-                        lstm_loaded = True
-                        break
-            except:
-                continue
-
-        # Load Dense weights
-        dense_loaded = False
-        for prefix in ['dense', 'dense_1']:
-            try:
-                if prefix in weights_group:
-                    dense_group = weights_group[prefix]
-                    if prefix in dense_group:
-                        dense_group = dense_group[prefix]
-
-                    kernel = None
-                    bias = None
-
-                    for key in dense_group.keys():
-                        if 'kernel' in key:
-                            kernel = np.array(dense_group[key])
-                        elif 'bias' in key:
-                            bias = np.array(dense_group[key])
-
-                    if kernel is not None and bias is not None:
-                        model.layers[2].set_weights([kernel, bias])
-                        dense_loaded = True
-                        break
-            except:
-                continue
-
-        return embedding_loaded, lstm_loaded, dense_loaded
-
-
 @st.cache_resource
 def load_trained_model():
     """
-    Load the pre-trained LSTM model.
-    Handles Keras version compatibility issues by manually loading weights.
+    Load the pre-trained LSTM model from SavedModel format.
     """
     import warnings
     warnings.filterwarnings('ignore')
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-    # Determine which model file exists
-    if os.path.exists(MODEL_PATH_KERAS):
-        model_path = MODEL_PATH_KERAS
-    elif os.path.exists(MODEL_PATH_H5):
-        model_path = MODEL_PATH_H5
-    else:
-        raise FileNotFoundError("No model file found. Please add sentiment_model.h5 or sentiment_model.keras to model/ folder.")
+    # Check if SavedModel exists (saved_model.pb in the model directory)
+    savedmodel_path = MODEL_DIR
 
-    # Method 1: Try direct loading (works if Keras versions match)
-    try:
-        from tensorflow.keras.models import load_model
-        model = load_model(model_path, compile=False)
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model, "direct_load"
-    except Exception as e1:
-        pass
+    if os.path.exists(os.path.join(savedmodel_path, 'saved_model.pb')):
+        try:
+            model = tf.keras.models.load_model(savedmodel_path)
+            return model, "savedmodel"
+        except Exception as e:
+            st.error(f"Error loading SavedModel: {e}")
 
-    # Method 2: Try with compile=False and safe_mode=False
-    try:
-        from tensorflow.keras.models import load_model
-        model = load_model(model_path, compile=False, safe_mode=False)
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model, "safe_mode_false"
-    except Exception as e2:
-        pass
+    # Fallback: Try loading .h5 or .keras file
+    for ext in ['.h5', '.keras']:
+        h5_path = os.path.join(MODEL_DIR, f'sentiment_model{ext}')
+        if os.path.exists(h5_path):
+            try:
+                model = tf.keras.models.load_model(h5_path, compile=False)
+                model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+                return model, f"h5_file({ext})"
+            except:
+                pass
 
-    # Method 3: Build model and load weights from H5 file
-    try:
-        model = build_model()
-        model.build(input_shape=(None, 200))
-
-        # Find the H5 file (could be .h5 or .keras)
-        h5_path = MODEL_PATH_H5 if os.path.exists(MODEL_PATH_H5) else MODEL_PATH_KERAS
-
-        emb_loaded, lstm_loaded, dense_loaded = load_weights_from_h5(model, h5_path)
-
-        if emb_loaded and lstm_loaded and dense_loaded:
-            return model, "manual_weights"
-        else:
-            return model, f"partial_weights(emb={emb_loaded},lstm={lstm_loaded},dense={dense_loaded})"
-    except Exception as e3:
-        pass
-
-    # Method 4: Return untrained model as last resort
-    model = build_model()
-    model.build(input_shape=(None, 200))
-    return model, "untrained_fallback"
+    raise FileNotFoundError("No valid model found in model/ directory")
 
 
 @st.cache_resource
@@ -210,8 +76,8 @@ def preprocess_text(text, tokenizer):
 
 def verify_model(model, tokenizer):
     """Verify model produces different outputs for positive vs negative text."""
-    pos_text = "This movie was amazing fantastic wonderful excellent"
-    neg_text = "This movie was terrible awful horrible worst"
+    pos_text = "This movie was amazing fantastic wonderful excellent masterpiece"
+    neg_text = "This movie was terrible awful horrible worst disaster"
 
     pos_pred = float(model.predict(preprocess_text(pos_text, tokenizer), verbose=0)[0][0])
     neg_pred = float(model.predict(preprocess_text(neg_text, tokenizer), verbose=0)[0][0])
@@ -235,7 +101,7 @@ def predict_sentiment(text, model, tokenizer):
         confidence = (1 - prediction) * 100
     else:
         sentiment = "Uncertain ⚠️"
-        confidence = (1 - abs(prediction - 0.5) * 2) * 100
+        confidence = 50 + (0.5 - abs(prediction - 0.5)) * 100
 
     return sentiment, confidence, prediction
 
@@ -265,6 +131,7 @@ def main():
 
         if is_working:
             st.success(f"✅ Model loaded successfully! (Method: {load_method})")
+            st.caption(f"Verification - Positive: {pos_score:.4f} | Negative: {neg_score:.4f}")
         else:
             st.warning(f"""
             ⚠️ **Model loaded but predictions may be inaccurate.**
@@ -272,17 +139,9 @@ def main():
             - Load method: `{load_method}`
             - Test positive score: {pos_score:.4f}
             - Test negative score: {neg_score:.4f}
-
-            **Fix:** Run `pip install --upgrade tensorflow` or re-export model from Colab.
             """)
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
-        st.info("""
-        **Troubleshooting:**
-        1. Ensure `sentiment_model.h5` is in the `model/` folder
-        2. Run: `pip install --upgrade tensorflow`
-        3. Or re-save model in Colab: `model.save('sentiment_model.h5', save_format='h5')`
-        """)
         return
 
     st.divider()

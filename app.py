@@ -1,557 +1,378 @@
 """
 Sentiment Analysis Web Application using LSTM
-This Streamlit application provides a user-friendly interface for sentiment prediction
-on movie reviews using a pre-trained LSTM deep learning model.
+Streamlit interface for predicting sentiment of movie reviews.
 
-Prediction Pipeline:
-User Input → Tokenizer → Text to Sequence → Padding (200 tokens) → LSTM Model → Sentiment
+Pipeline: User Input → Tokenizer → Sequence → Padding (200) → LSTM Model → Prediction
 """
 
 import streamlit as st
 import numpy as np
 import pickle
-import tensorflow as tf
-from tensorflow.keras.models import load_model
+import h5py
+import os
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, LSTM, Dense
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 # Constants
 MAX_SEQUENCE_LENGTH = 200
-MODEL_PATH = 'model/sentiment_model.h5'
-TOKENIZER_PATH = 'model/tokenizer.pkl'
+MODEL_PATH_H5 = "model/sentiment_model.h5"
+MODEL_PATH_KERAS = "model/sentiment_model.keras"
+TOKENIZER_PATH = "model/tokenizer.pkl"
 
-# Sample movie reviews for demonstration
+# Sample reviews for demo
 SAMPLE_REVIEWS = {
-    "Positive Example 1": "This movie was amazing and inspiring! The acting was superb, the plot kept me engaged throughout, and the cinematography was breathtaking. Highly recommend!",
-    "Positive Example 2": "A masterpiece of storytelling. The director did an amazing job bringing the characters to life. I laughed, I cried, and I left the theater feeling inspired.",
-    "Negative Example 1": "This movie was terrible and boring. The plot made no sense, the acting was wooden, and I nearly fell asleep halfway through. Save your money.",
-    "Negative Example 2": "I was really disappointed with this film. The story was predictable, the characters were one-dimensional, and the pacing was painfully slow."
+    "Positive Example 1": "This movie was amazing and inspiring! The acting was superb, the plot kept me engaged throughout, and the cinematography was breathtaking.",
+    "Positive Example 2": "A masterpiece! I loved every minute of it. The director did an incredible job and the performances were outstanding.",
+    "Negative Example 1": "This movie was terrible and boring. The plot made no sense, the acting was wooden, and I nearly fell asleep.",
+    "Negative Example 2": "Worst film I've ever seen. Complete waste of time and money. The story was predictable and the characters were annoying."
 }
+
+
+def build_model():
+    """Build the LSTM model architecture."""
+    model = Sequential([
+        Embedding(input_dim=5000, output_dim=128, input_length=200, name='embedding'),
+        LSTM(128, dropout=0.2, recurrent_dropout=0.2, name='lstm'),
+        Dense(1, activation='sigmoid', name='dense')
+    ])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    return model
+
+
+def load_weights_from_h5(model, h5_path):
+    """
+    Extract weights from H5 file and load into model.
+    This handles Keras 3.x to Keras 2.x compatibility issues.
+    """
+    with h5py.File(h5_path, 'r') as f:
+        # Print structure for debugging
+        def print_structure(name, obj):
+            pass  # Uncomment below for debugging
+            # print(name)
+        # f.visititems(print_structure)
+
+        # Try different H5 structures (Keras saves in different formats)
+
+        # Structure 1: model_weights/layer_name/layer_name/weight_name
+        if 'model_weights' in f:
+            weights_group = f['model_weights']
+        else:
+            weights_group = f
+
+        # Load Embedding weights
+        embedding_loaded = False
+        for path in ['embedding/embedding/embeddings:0', 'embedding/embeddings:0',
+                     'embedding_1/embedding_1/embeddings:0', 'embedding_1/embeddings:0']:
+            try:
+                parts = path.split('/')
+                group = weights_group
+                for part in parts[:-1]:
+                    if part in group:
+                        group = group[part]
+                if parts[-1] in group:
+                    emb_weights = np.array(group[parts[-1]])
+                    model.layers[0].set_weights([emb_weights])
+                    embedding_loaded = True
+                    break
+            except:
+                continue
+
+        # Load LSTM weights
+        lstm_loaded = False
+        for prefix in ['lstm', 'lstm_1']:
+            try:
+                if prefix in weights_group:
+                    lstm_group = weights_group[prefix]
+                    if prefix in lstm_group:
+                        lstm_group = lstm_group[prefix]
+
+                    kernel = None
+                    recurrent = None
+                    bias = None
+
+                    for key in lstm_group.keys():
+                        if 'kernel' in key and 'recurrent' not in key:
+                            kernel = np.array(lstm_group[key])
+                        elif 'recurrent_kernel' in key:
+                            recurrent = np.array(lstm_group[key])
+                        elif 'bias' in key:
+                            bias = np.array(lstm_group[key])
+
+                    if kernel is not None and recurrent is not None and bias is not None:
+                        model.layers[1].set_weights([kernel, recurrent, bias])
+                        lstm_loaded = True
+                        break
+            except:
+                continue
+
+        # Load Dense weights
+        dense_loaded = False
+        for prefix in ['dense', 'dense_1']:
+            try:
+                if prefix in weights_group:
+                    dense_group = weights_group[prefix]
+                    if prefix in dense_group:
+                        dense_group = dense_group[prefix]
+
+                    kernel = None
+                    bias = None
+
+                    for key in dense_group.keys():
+                        if 'kernel' in key:
+                            kernel = np.array(dense_group[key])
+                        elif 'bias' in key:
+                            bias = np.array(dense_group[key])
+
+                    if kernel is not None and bias is not None:
+                        model.layers[2].set_weights([kernel, bias])
+                        dense_loaded = True
+                        break
+            except:
+                continue
+
+        return embedding_loaded, lstm_loaded, dense_loaded
 
 
 @st.cache_resource
 def load_trained_model():
     """
-    Load the pre-trained LSTM model from disk.
-    Handles Keras version compatibility issues.
+    Load the pre-trained LSTM model.
+    Handles Keras version compatibility issues by manually loading weights.
     """
     import warnings
-    import os
     warnings.filterwarnings('ignore')
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-    # Method 1: Try standard loading
+    # Determine which model file exists
+    if os.path.exists(MODEL_PATH_KERAS):
+        model_path = MODEL_PATH_KERAS
+    elif os.path.exists(MODEL_PATH_H5):
+        model_path = MODEL_PATH_H5
+    else:
+        raise FileNotFoundError("No model file found. Please add sentiment_model.h5 or sentiment_model.keras to model/ folder.")
+
+    # Method 1: Try direct loading (works if Keras versions match)
     try:
-        model = load_model(MODEL_PATH, compile=False)
+        from tensorflow.keras.models import load_model
+        model = load_model(model_path, compile=False)
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model, "standard"
+        return model, "direct_load"
     except Exception as e1:
         pass
 
-    # Method 2: Try with safe_mode=False (newer Keras)
+    # Method 2: Try with compile=False and safe_mode=False
     try:
-        model = load_model(MODEL_PATH, compile=False, safe_mode=False)
+        from tensorflow.keras.models import load_model
+        model = load_model(model_path, compile=False, safe_mode=False)
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         return model, "safe_mode_false"
     except Exception as e2:
         pass
 
-    # Method 3: Use custom_objects to handle unknown arguments
+    # Method 3: Build model and load weights from H5 file
     try:
-        import tensorflow as tf
-        from tensorflow.keras.layers import Embedding
+        model = build_model()
+        model.build(input_shape=(None, 200))
 
-        # Create custom Embedding class that ignores unknown kwargs
-        class CustomEmbedding(Embedding):
-            def __init__(self, *args, **kwargs):
-                # Remove unknown kwargs
-                kwargs.pop('quantization_config', None)
-                super().__init__(*args, **kwargs)
+        # Find the H5 file (could be .h5 or .keras)
+        h5_path = MODEL_PATH_H5 if os.path.exists(MODEL_PATH_H5) else MODEL_PATH_KERAS
 
-        custom_objects = {'Embedding': CustomEmbedding}
-        model = load_model(MODEL_PATH, compile=False, custom_objects=custom_objects)
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model, "custom_objects"
+        emb_loaded, lstm_loaded, dense_loaded = load_weights_from_h5(model, h5_path)
+
+        if emb_loaded and lstm_loaded and dense_loaded:
+            return model, "manual_weights"
+        else:
+            return model, f"partial_weights(emb={emb_loaded},lstm={lstm_loaded},dense={dense_loaded})"
     except Exception as e3:
         pass
 
-    # Method 4: Load using TF SavedModel format if available
-    try:
-        import tensorflow as tf
-        # Try loading as SavedModel
-        model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model, "tf_keras"
-    except Exception as e4:
-        pass
-
-    # Method 5: Extract weights from H5 file and rebuild model
-    try:
-        import h5py
-        from tensorflow.keras.models import Sequential
-        from tensorflow.keras.layers import Embedding, LSTM, Dense
-
-        # Build model with same architecture
-        model = Sequential([
-            Embedding(input_dim=5000, output_dim=128, input_length=200, name='embedding'),
-            LSTM(128, dropout=0.2, recurrent_dropout=0.2, name='lstm'),
-            Dense(1, activation='sigmoid', name='dense')
-        ])
-        model.build(input_shape=(None, 200))
-
-        # Extract and set weights from H5 file
-        with h5py.File(MODEL_PATH, 'r') as f:
-            # Navigate H5 structure to find weights
-            if 'model_weights' in f:
-                weights_group = f['model_weights']
-            else:
-                weights_group = f
-
-            # Try to load weights layer by layer
-            for layer in model.layers:
-                layer_name = layer.name
-                # Check various possible naming conventions
-                possible_names = [
-                    layer_name,
-                    f'{layer_name}_1',
-                    layer_name.replace('_', ''),
-                ]
-
-                for name in possible_names:
-                    if name in weights_group:
-                        layer_weights = []
-                        layer_group = weights_group[name]
-                        if name in layer_group:
-                            layer_group = layer_group[name]
-                        for weight_name in layer_group:
-                            layer_weights.append(np.array(layer_group[weight_name]))
-                        if layer_weights:
-                            try:
-                                layer.set_weights(layer_weights)
-                            except:
-                                pass
-                        break
-
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model, "h5_extract"
-    except Exception as e5:
-        pass
-
-    # If all methods fail, raise error with instructions
-    raise RuntimeError(
-        "Could not load model. Please try:\n"
-        "1. Upgrade TensorFlow: pip install --upgrade tensorflow\n"
-        "2. Or re-save the model in Colab using: model.save('sentiment_model.keras')"
-    )
+    # Method 4: Return untrained model as last resort
+    model = build_model()
+    model.build(input_shape=(None, 200))
+    return model, "untrained_fallback"
 
 
 @st.cache_resource
 def load_tokenizer():
     """Load the fitted tokenizer from disk."""
-    with open(TOKENIZER_PATH, 'rb') as file:
-        tokenizer = pickle.load(file)
+    with open(TOKENIZER_PATH, "rb") as f:
+        tokenizer = pickle.load(f)
     return tokenizer
 
 
-def preprocess_text(text, tokenizer, max_length=MAX_SEQUENCE_LENGTH):
-    """
-    Preprocess input text for model prediction.
+def preprocess_text(text, tokenizer):
+    """Convert text to padded sequence."""
+    sequence = tokenizer.texts_to_sequences([text])
+    padded = pad_sequences(sequence, maxlen=MAX_SEQUENCE_LENGTH)
+    return padded
 
-    Pipeline: Text → Tokenizer → Sequence → Padding (200 tokens)
 
-    IMPORTANT: Use default padding='pre' to match training preprocessing.
-    """
-    # Convert text to sequence of integers
-    sequences = tokenizer.texts_to_sequences([text])
-    # Pad sequence to fixed length of 200 tokens (default padding='pre' to match training)
-    padded_sequence = pad_sequences(sequences, maxlen=max_length)
-    return padded_sequence
+def verify_model(model, tokenizer):
+    """Verify model produces different outputs for positive vs negative text."""
+    pos_text = "This movie was amazing fantastic wonderful excellent"
+    neg_text = "This movie was terrible awful horrible worst"
+
+    pos_pred = float(model.predict(preprocess_text(pos_text, tokenizer), verbose=0)[0][0])
+    neg_pred = float(model.predict(preprocess_text(neg_text, tokenizer), verbose=0)[0][0])
+
+    # Model should give higher score for positive text
+    is_working = pos_pred > neg_pred and abs(pos_pred - neg_pred) > 0.1
+    return is_working, pos_pred, neg_pred
 
 
 def predict_sentiment(text, model, tokenizer):
-    """
-    Generate sentiment prediction for the given text.
+    """Generate sentiment prediction."""
+    padded = preprocess_text(text, tokenizer)
+    prediction = float(model.predict(padded, verbose=0)[0][0])
 
-    Returns:
-        confidence (float): Model output probability (0.0 to 1.0)
-            - Values closer to 1.0 indicate positive sentiment
-            - Values closer to 0.0 indicate negative sentiment
-    """
-    # Preprocess: Tokenize and pad the input text
-    padded_sequence = preprocess_text(text, tokenizer)
-
-    # Get model prediction
-    prediction = model.predict(padded_sequence, verbose=0)
-
-    # Extract confidence score (probability)
-    confidence = float(prediction[0][0])
-
-    return confidence
-
-
-def get_sentiment_label(prediction):
-    """
-    Determine sentiment label based on prediction score.
-
-    Uses standard sigmoid classification threshold of 0.5:
-    - >= 0.5 → Positive
-    - < 0.5 → Negative
-
-    Args:
-        prediction (float): Model output probability (0.0 to 1.0)
-
-    Returns:
-        tuple: (sentiment_label, emoji)
-    """
-    if prediction >= 0.5:
-        return "POSITIVE", "😊"
+    # Determine sentiment with uncertain zone
+    if prediction >= 0.6:
+        sentiment = "Positive 😊"
+        confidence = prediction * 100
+    elif prediction <= 0.4:
+        sentiment = "Negative 😞"
+        confidence = (1 - prediction) * 100
     else:
-        return "NEGATIVE", "😞"
+        sentiment = "Uncertain ⚠️"
+        confidence = (1 - abs(prediction - 0.5) * 2) * 100
 
-
-def get_confidence_level(prediction):
-    """
-    Classify confidence level based on how far prediction is from 0.5.
-
-    Args:
-        prediction (float): Model output probability (0.0 to 1.0)
-
-    Returns:
-        tuple: (confidence_level, display_type)
-    """
-    distance = abs(prediction - 0.5)
-    if distance >= 0.3:  # > 0.8 or < 0.2
-        return "High", "success"
-    elif distance >= 0.15:  # 0.65-0.8 or 0.2-0.35
-        return "Medium", "info"
-    else:  # 0.35-0.65
-        return "Low", "warning"
-
-
-def get_confidence_percent(prediction):
-    """
-    Convert prediction to display confidence percentage.
-
-    For positive predictions (>=0.5): shows prediction as confidence
-    For negative predictions (<0.5): shows (1 - prediction) as confidence
-
-    Args:
-        prediction (float): Model output probability (0.0 to 1.0)
-
-    Returns:
-        float: Confidence percentage for display
-    """
-    if prediction >= 0.5:
-        return prediction * 100
-    else:
-        return (1 - prediction) * 100
-
-
-def verify_model_working(model, tokenizer):
-    """
-    Verify that the model is producing valid predictions.
-    Tests with known positive and negative samples.
-    """
-    test_positive = "This movie was absolutely amazing and fantastic"
-    test_negative = "This movie was terrible awful and boring"
-
-    seq_pos = tokenizer.texts_to_sequences([test_positive])
-    seq_neg = tokenizer.texts_to_sequences([test_negative])
-
-    # Use default padding='pre' to match training
-    pad_pos = pad_sequences(seq_pos, maxlen=200)
-    pad_neg = pad_sequences(seq_neg, maxlen=200)
-
-    pred_pos = float(model.predict(pad_pos, verbose=0)[0][0])
-    pred_neg = float(model.predict(pad_neg, verbose=0)[0][0])
-
-    # Check if model differentiates between positive and negative
-    # Positive should be > 0.5, Negative should be < 0.5
-    is_working = (pred_pos > pred_neg) and (abs(pred_pos - pred_neg) > 0.1)
-
-    return is_working, pred_pos, pred_neg
+    return sentiment, confidence, prediction
 
 
 def main():
-    """Main function to run the Streamlit application."""
-
-    # Page configuration
     st.set_page_config(
         page_title="Movie Review Sentiment Analysis",
         page_icon="🎬",
         layout="centered"
     )
 
-    # Application title
     st.title("🎬 Movie Review Sentiment Analysis")
-    st.caption("Powered by LSTM Deep Learning")
+    st.caption("Deep Learning Sentiment Analysis using LSTM")
 
-    # Important notice about the model
-    st.info("""
-    **Important:** This model is trained specifically on **IMDB Movie Reviews**.
-
-    For best results:
-    - Enter movie/film reviews or opinions about movies
-    - Use complete sentences with proper grammar
-    - Longer, detailed reviews give more accurate predictions
-
-    *Note: General sentences or non-movie text may produce inaccurate results.*
-    """)
-
-    st.divider()
+    st.info(
+        "**Note:** This model is trained on **IMDB Movie Reviews**. "
+        "For best results, enter detailed movie reviews with proper grammar."
+    )
 
     # Load model and tokenizer
     try:
         model, load_method = load_trained_model()
         tokenizer = load_tokenizer()
 
-        # Verify model is working correctly
-        is_working, test_pos, test_neg = verify_model_working(model, tokenizer)
+        # Verify model is working
+        is_working, pos_score, neg_score = verify_model(model, tokenizer)
 
         if is_working:
             st.success(f"✅ Model loaded successfully! (Method: {load_method})")
         else:
             st.warning(f"""
-            ⚠️ Model loaded but may not be working correctly.
+            ⚠️ **Model loaded but predictions may be inaccurate.**
 
-            **Debug Info:**
-            - Load method: {load_method}
-            - Test positive score: {test_pos:.4f}
-            - Test negative score: {test_neg:.4f}
+            - Load method: `{load_method}`
+            - Test positive score: {pos_score:.4f}
+            - Test negative score: {neg_score:.4f}
 
-            **Possible Fix:** Please upgrade TensorFlow:
-            ```
-            pip install --upgrade tensorflow
-            ```
-            Or re-download the model from Google Colab.
+            **Fix:** Run `pip install --upgrade tensorflow` or re-export model from Colab.
             """)
-
     except Exception as e:
-        st.error(f"❌ Error loading model: {str(e)}")
+        st.error(f"❌ Error loading model: {e}")
         st.info("""
         **Troubleshooting:**
-        1. Ensure model files are in the 'model/' directory
-        2. Try upgrading TensorFlow: `pip install --upgrade tensorflow`
-        3. Re-save the model in Colab using `.keras` format
+        1. Ensure `sentiment_model.h5` is in the `model/` folder
+        2. Run: `pip install --upgrade tensorflow`
+        3. Or re-save model in Colab: `model.save('sentiment_model.h5', save_format='h5')`
         """)
         return
 
-    # Two columns: Input and Examples
-    col_input, col_examples = st.columns([2, 1])
+    st.divider()
 
-    with col_input:
+    # Input section
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
         st.subheader("📝 Enter Movie Review")
         user_input = st.text_area(
-            label="Movie Review",
-            placeholder="Example: This movie was amazing! The plot was engaging and the actors delivered stellar performances...",
-            height=180,
+            "Review",
+            placeholder="Example: This movie was amazing! The acting was superb and the story was engaging...",
+            height=150,
             label_visibility="collapsed"
         )
 
-    with col_examples:
-        st.subheader("📋 Try Examples")
-        selected_example = st.selectbox(
-            "Select a sample review:",
+    with col2:
+        st.subheader("📋 Examples")
+        example = st.selectbox(
+            "Select example:",
             ["-- Select --"] + list(SAMPLE_REVIEWS.keys()),
             label_visibility="collapsed"
         )
 
-        if selected_example != "-- Select --":
+        if example != "-- Select --":
             if st.button("Use This Example", use_container_width=True):
-                st.session_state['selected_review'] = SAMPLE_REVIEWS[selected_example]
+                st.session_state['example_text'] = SAMPLE_REVIEWS[example]
                 st.rerun()
 
-    # Use selected example if available
-    if 'selected_review' in st.session_state and not user_input:
-        user_input = st.session_state['selected_review']
-        st.text_area("Selected Review:", value=user_input, height=100, disabled=True)
+    # Use example if selected
+    if 'example_text' in st.session_state:
+        user_input = st.session_state['example_text']
+        st.text_area("Selected:", value=user_input, height=80, disabled=True)
+        if st.button("Clear", use_container_width=True):
+            del st.session_state['example_text']
+            st.rerun()
 
-    # Prediction button
-    st.markdown("")
-    predict_clicked = st.button("🔮 Analyze Sentiment", type="primary", use_container_width=True)
-
-    if predict_clicked:
-        if user_input and user_input.strip():
-            # Check input quality
+    # Predict button
+    if st.button("🔮 Analyze Sentiment", type="primary", use_container_width=True):
+        if not user_input or not user_input.strip():
+            st.warning("⚠️ Please enter a movie review.")
+        else:
             word_count = len(user_input.split())
+            if word_count < 5:
+                st.warning("⚠️ Input is very short. Results may be inaccurate.")
 
-            with st.spinner("Analyzing sentiment..."):
-                # Get model prediction (probability score)
-                prediction = predict_sentiment(user_input, model, tokenizer)
+            with st.spinner("Analyzing..."):
+                sentiment, confidence, raw_score = predict_sentiment(user_input, model, tokenizer)
 
             st.divider()
-            st.subheader("📊 Analysis Results")
+            st.subheader("📊 Results")
 
-            # Warning for short input
-            if word_count < 5:
-                st.warning("⚠️ Your input is very short. For better accuracy, please enter a longer movie review (at least 10-20 words).")
-
-            # Determine sentiment label and confidence level
-            sentiment_label, sentiment_emoji = get_sentiment_label(prediction)
-            confidence_level, confidence_type = get_confidence_level(prediction)
-            confidence_percent = get_confidence_percent(prediction)
-
-            # Results display - 3 columns
             col1, col2, col3 = st.columns(3)
-
             with col1:
-                st.metric(
-                    label="Sentiment",
-                    value=f"{sentiment_emoji} {sentiment_label}"
-                )
-
+                st.metric("Sentiment", sentiment)
             with col2:
-                st.metric(
-                    label="Confidence",
-                    value=f"{confidence_percent:.1f}%"
-                )
-
+                st.metric("Confidence", f"{confidence:.1f}%")
             with col3:
-                st.metric(
-                    label="Confidence Level",
-                    value=confidence_level
-                )
+                st.metric("Raw Score", f"{raw_score:.4f}")
 
-            # Sentiment Score Bar
-            st.markdown("**Sentiment Score:**")
-            st.progress(prediction)
+            # Score bar
+            st.progress(raw_score)
+            c1, c2, c3 = st.columns(3)
+            c1.caption("← Negative (0)")
+            c2.caption("Uncertain")
+            c3.caption("Positive (1) →")
 
-            # Score bar labels
-            col_neg, col_mid, col_pos = st.columns([1, 1, 1])
-            with col_neg:
-                st.caption("← Negative (0%)")
-            with col_mid:
-                st.caption("| 50% |")
-            with col_pos:
-                st.caption("Positive (100%) →")
-
-            # Raw score display
-            st.caption(f"Raw Model Output: {prediction:.4f} ({prediction * 100:.2f}%)")
-
-            # Interpretation message
-            st.markdown("---")
-            st.markdown("**Interpretation:**")
-
-            if confidence_level == "Low":
-                if sentiment_label == "POSITIVE":
-                    st.warning(f"""
-                    ✅ **Positive Sentiment (Low Confidence)**
-
-                    The model predicts **POSITIVE** but with low confidence ({confidence_percent:.1f}%).
-
-                    The prediction is close to the decision boundary (50%), which may indicate:
-                    - Mixed sentiments in the review
-                    - Ambiguous or unclear text
-                    - Text not strongly related to movie reviews
-
-                    **Tip:** Longer reviews with clearer positive/negative language give better results.
-                    """)
-                else:
-                    st.warning(f"""
-                    ❌ **Negative Sentiment (Low Confidence)**
-
-                    The model predicts **NEGATIVE** but with low confidence ({confidence_percent:.1f}%).
-
-                    The prediction is close to the decision boundary (50%), which may indicate:
-                    - Mixed sentiments in the review
-                    - Ambiguous or unclear text
-                    - Text not strongly related to movie reviews
-
-                    **Tip:** Longer reviews with clearer positive/negative language give better results.
-                    """)
-            elif sentiment_label == "POSITIVE":
-                if confidence_level == "High":
-                    st.success(f"""
-                    ✅ **Strong Positive Sentiment**
-
-                    The model is **highly confident** ({confidence_percent:.1f}%) that this is a **positive movie review**.
-
-                    The review clearly expresses favorable opinions about the movie.
-                    """)
-                else:
-                    st.success(f"""
-                    ✅ **Positive Sentiment Detected**
-
-                    The model predicts this is a **positive movie review** with **{confidence_percent:.1f}%** confidence.
-
-                    The review appears to express favorable opinions about the movie.
-                    """)
-            else:  # NEGATIVE
-                if confidence_level == "High":
-                    st.error(f"""
-                    ❌ **Strong Negative Sentiment**
-
-                    The model is **highly confident** ({confidence_percent:.1f}%) that this is a **negative movie review**.
-
-                    The review clearly expresses unfavorable opinions about the movie.
-                    """)
-                else:
-                    st.error(f"""
-                    ❌ **Negative Sentiment Detected**
-
-                    The model predicts this is a **negative movie review** with **{confidence_percent:.1f}%** confidence.
-
-                    The review appears to express unfavorable opinions about the movie.
-                    """)
-
-        else:
-            st.warning("⚠️ Please enter a movie review to analyze.")
-
-    # Clear session state button
-    if 'selected_review' in st.session_state:
-        if st.button("Clear Example", use_container_width=True):
-            del st.session_state['selected_review']
-            st.rerun()
+            # Interpretation
+            if "Positive" in sentiment:
+                st.success(f"✅ The model predicts this is a **positive** review ({confidence:.1f}% confidence).")
+            elif "Negative" in sentiment:
+                st.error(f"❌ The model predicts this is a **negative** review ({confidence:.1f}% confidence).")
+            else:
+                st.warning(f"⚠️ The model is **uncertain** about this review. Try a longer, clearer review.")
 
     # Footer
     st.divider()
-
-    with st.expander("ℹ️ About This Model"):
+    with st.expander("ℹ️ About"):
         st.markdown("""
-        ### Model Information
+        **Model:** LSTM Neural Network
+        **Dataset:** IMDB 50K Movie Reviews
+        **Accuracy:** ~88%
 
-        | Attribute | Value |
-        |-----------|-------|
-        | **Model Type** | LSTM (Long Short-Term Memory) |
-        | **Training Dataset** | IMDB 50K Movie Reviews |
-        | **Vocabulary Size** | 5,000 words |
-        | **Sequence Length** | 200 tokens |
-        | **Test Accuracy** | ~88% |
-
-        ### Prediction Logic
-
-        The model outputs a sigmoid probability (0 to 1):
-
-        | Score | Sentiment |
-        |-------|-----------|
-        | **≥ 0.50** | Positive 😊 |
-        | **< 0.50** | Negative 😞 |
-
-        ### Confidence Levels
-
-        Based on distance from decision boundary (0.5):
-
-        | Distance from 0.5 | Level |
-        |-------------------|-------|
-        | **≥ 0.30** (>80% or <20%) | High |
-        | **0.15 - 0.30** (65-80% or 20-35%) | Medium |
-        | **< 0.15** (35-65%) | Low |
-
-        ### Limitations
-
-        - **Domain-Specific:** Trained only on movie reviews
-        - **English Only:** Only understands English text
-        - **Grammar Sensitive:** Works better with proper grammar
-
-        ### Best Practices
-
-        1. Enter complete movie reviews (not single words)
-        2. Use proper English grammar
-        3. Provide context (movie, acting, plot, etc.)
-        4. Longer reviews (50+ words) give better results
+        **Prediction Zones:**
+        - Score > 0.6 → Positive
+        - Score < 0.4 → Negative
+        - 0.4 - 0.6 → Uncertain
         """)
 
-    st.markdown("---")
-    st.caption("🎓 Academic Deep Learning Project | Built with TensorFlow & Streamlit")
+    st.caption("🎓 Academic Deep Learning Project | TensorFlow + Streamlit")
 
 
 if __name__ == "__main__":

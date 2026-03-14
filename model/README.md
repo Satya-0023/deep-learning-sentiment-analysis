@@ -11,7 +11,7 @@ Place the following files in this directory:
 
 ## How to Obtain These Files
 
-These files are generated when you run the training notebook (`notebooks/sentiment_training.ipynb`).
+These files are generated when you run the training notebook (`notebooks/sentiment_analysis.ipynb`).
 
 Alternatively, if you trained the model in Google Colab, download:
 

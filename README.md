@@ -260,19 +260,19 @@ User Input → Load Tokenizer → Tokenize Text → Pad Sequence → Load Model 
 deep-learning-sentiment-analysis/
 │
 ├── notebooks/
-│   └── sentiment_training.ipynb  # Model training notebook
+│   └── sentiment_analysis.ipynb   # Model training notebook
 │
 ├── model/
-│   ├── sentiment_model.h5        # Trained LSTM model
-│   └── tokenizer.pkl             # Fitted tokenizer
+│   ├── sentiment_model.h5         # Trained LSTM model
+│   └── tokenizer.pkl              # Fitted tokenizer
 │
 ├── assets/
-│   └── workflow.svg              # Project workflow diagram
+│   └── workflow.svg               # Project workflow diagram
 │
-├── app.py                        # Streamlit web application
-├── requirements.txt              # Python dependencies
-├── .gitignore                    # Git ignore rules
-└── README.md                     # Project documentation
+├── app.py                         # Streamlit web application
+├── requirements.txt               # Python dependencies
+├── .gitignore                     # Git ignore rules
+└── README.md                      # Project documentation
 ```
 
 ---

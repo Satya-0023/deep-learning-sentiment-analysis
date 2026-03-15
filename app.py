@@ -5,12 +5,18 @@ Streamlit interface for predicting sentiment of movie reviews.
 Pipeline: User Input → Tokenizer → Sequence → Padding (200) → LSTM Model → Prediction
 """
 
+import os
+# Must be set BEFORE importing streamlit or tensorflow
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
 import streamlit as st
 import numpy as np
 import pickle
-import os
 import tensorflow as tf
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+try:
+    from tensorflow.keras.preprocessing.sequence import pad_sequences
+except ImportError:
+    from tensorflow.keras.utils import pad_sequences
 
 # Constants
 MAX_SEQUENCE_LENGTH = 200
@@ -29,51 +35,57 @@ SAMPLE_REVIEWS = {
 @st.cache_resource
 def load_trained_model():
     """
-    Load the pre-trained LSTM model.
-    Handles both Keras 2 and Keras 3 compatibility.
+    Load the pre-trained LSTM model from sentiment_model.h5.
+    Uses h5py directly to bypass Keras 3's broken H5 weight loader
+    which crashes with NoneType.pop on Keras 2 → Keras 3 format mismatches.
     """
     import warnings
+    import h5py
+    import numpy as np
     warnings.filterwarnings('ignore')
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-    # Check if SavedModel exists
-    savedmodel_path = MODEL_DIR
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Embedding, LSTM, Dense, Input
 
-    if os.path.exists(os.path.join(savedmodel_path, 'saved_model.pb')):
-        # Method 1: Try Keras 3 TFSMLayer (for SavedModel format)
-        try:
-            from tensorflow import keras
-            model = keras.layers.TFSMLayer(savedmodel_path, call_endpoint='serving_default')
-            return model, "tfsm_layer"
-        except Exception as e1:
-            pass
+    h5_path = os.path.join(MODEL_DIR, 'sentiment_model.h5')
+    if not os.path.exists(h5_path):
+        raise FileNotFoundError(f"Model file not found: {h5_path}")
 
-        # Method 2: Try standard load_model (Keras 2 style)
-        try:
-            model = tf.keras.models.load_model(savedmodel_path)
-            return model, "savedmodel"
-        except Exception as e2:
-            pass
+    # Build the exact architecture stored in the H5 file
+    model = Sequential([
+        Input(shape=(MAX_SEQUENCE_LENGTH,), name='input_layer'),
+        Embedding(input_dim=5000, output_dim=128, name='embedding'),
+        LSTM(128, dropout=0.2, name='lstm'),
+        Dense(1, activation='sigmoid', name='dense')
+    ])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
-        # Method 3: Try with tf.saved_model.load
-        try:
-            model = tf.saved_model.load(savedmodel_path)
-            return model, "tf_saved_model"
-        except Exception as e3:
-            pass
+    # Load weights directly with h5py — no Keras .load_weights() involved.
+    # Keras 3's loader internally calls .pop() on dicts that are None
+    # in Keras 2 H5 files, causing hard crashes. h5py + set_weights() is safe.
+    with h5py.File(h5_path, 'r') as f:
+        mw = f['model_weights']
+        # Embedding
+        emb_w = np.array(mw['embedding']['sequential']['embedding']['embeddings'])
+        model.get_layer('embedding').set_weights([emb_w])
+        # LSTM: kernel, recurrent_kernel, bias
+        lc = mw['lstm']['sequential']['lstm']['lstm_cell']
+        model.get_layer('lstm').set_weights([
+            np.array(lc['kernel']),
+            np.array(lc['recurrent_kernel']),
+            np.array(lc['bias'])
+        ])
+        # Dense: kernel, bias
+        d = mw['dense']['sequential']['dense']
+        model.get_layer('dense').set_weights([
+            np.array(d['kernel']),
+            np.array(d['bias'])
+        ])
 
-    # Method 4: Try loading .keras or .h5 file
-    for ext in ['.keras', '.h5']:
-        h5_path = os.path.join(MODEL_DIR, f'sentiment_model{ext}')
-        if os.path.exists(h5_path):
-            try:
-                model = tf.keras.models.load_model(h5_path, compile=False)
-                model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-                return model, f"keras_file({ext})"
-            except:
-                pass
+    return model, "h5py_direct"
 
-    raise FileNotFoundError("No valid model found in model/ directory")
+
 
 
 @st.cache_resource
@@ -93,21 +105,11 @@ def preprocess_text(text, tokenizer):
 
 def get_prediction(model, padded_input):
     """
-    Get prediction from model, handling different model types.
-    TFSMLayer returns dict, regular model returns array.
+    Get prediction from model.
+    Uses model.predict() to avoid triggering TF 2.20's while_loop code path
+    (which LSTM's recurrent_dropout activates and calls .pop() on a None TensorArray).
     """
-    result = model(padded_input)
-
-    # Handle TFSMLayer output (returns dictionary)
-    if isinstance(result, dict):
-        # Get the first output key
-        key = list(result.keys())[0]
-        return float(result[key].numpy()[0][0])
-    # Handle regular model output
-    elif hasattr(result, 'numpy'):
-        return float(result.numpy()[0][0])
-    else:
-        return float(result[0][0])
+    return float(model.predict(padded_input, verbose=0)[0][0])
 
 
 def verify_model(model, tokenizer):
@@ -155,9 +157,15 @@ def main():
     st.title("🎬 Movie Review Sentiment Analysis")
     st.caption("Deep Learning Sentiment Analysis using LSTM")
 
+    st.warning(
+        "⚠️ **This model is trained exclusively on IMDB Movie Reviews.** "
+        "It is designed to analyse **movie review text only**. "
+        "Entering non-movie text (product reviews, restaurant reviews, general sentences) "
+        "may produce **inaccurate or unexpected results.**"
+    )
     st.info(
-        "**Note:** This model is trained on **IMDB Movie Reviews**. "
-        "For best results, enter detailed movie reviews with proper grammar."
+        "💡 **For best results:** Write a detailed movie review (15+ words) "
+        "using clear positive or negative language."
     )
 
     # Load model and tokenizer
@@ -185,18 +193,14 @@ def main():
 
     st.divider()
 
-    # Input section
+    # Session state initialization
+    if 'review_text' not in st.session_state:
+        st.session_state.review_text = ''
+
     col1, col2 = st.columns([2, 1])
 
-    with col1:
-        st.subheader("📝 Enter Movie Review")
-        user_input = st.text_area(
-            "Review",
-            placeholder="Example: This movie was amazing! The acting was superb and the story was engaging...",
-            height=150,
-            label_visibility="collapsed"
-        )
-
+    # col2 is rendered FIRST so the buttons can update session_state
+    # BEFORE the text_area in col1 reads it via value=.
     with col2:
         st.subheader("📋 Examples")
         example = st.selectbox(
@@ -207,16 +211,24 @@ def main():
 
         if example != "-- Select --":
             if st.button("Use This Example", use_container_width=True):
-                st.session_state['example_text'] = SAMPLE_REVIEWS[example]
-                st.rerun()
+                st.session_state.review_text = SAMPLE_REVIEWS[example]
 
-    # Use example if selected
-    if 'example_text' in st.session_state:
-        user_input = st.session_state['example_text']
-        st.text_area("Selected:", value=user_input, height=80, disabled=True)
-        if st.button("Clear", use_container_width=True):
-            del st.session_state['example_text']
-            st.rerun()
+        if st.session_state.review_text:
+            if st.button("Clear", use_container_width=True):
+                st.session_state.review_text = ''
+
+    with col1:
+        st.subheader("📝 Enter Movie Review")
+        # Use value= (not key=) so Streamlit never locks this session state key.
+        # The widget reads the current value; buttons above have already updated it.
+        user_input = st.text_area(
+            "Review",
+            value=st.session_state.review_text,
+            placeholder="Example: This movie was amazing! The acting was superb and the story was engaging...",
+            height=150,
+            label_visibility="collapsed"
+        )
+
 
     # Predict button
     if st.button("🔮 Analyze Sentiment", type="primary", use_container_width=True):
@@ -242,7 +254,10 @@ def main():
                 st.metric("Raw Score", f"{raw_score:.4f}")
 
             # Score bar
-            st.progress(raw_score)
+            # FIX 1: sigmoid can return values microscopically outside [0, 1]
+            # due to floating-point rounding. Clip before passing to st.progress
+            # to prevent a hard StreamlitAPIException crash.
+            st.progress(float(np.clip(raw_score, 0.0, 1.0)))
             c1, c2, c3 = st.columns(3)
             c1.caption("← Negative (0)")
             c2.caption("Uncertain")

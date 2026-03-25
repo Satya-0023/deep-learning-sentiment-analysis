@@ -198,7 +198,7 @@ Example: "This movie was not good, but the acting was excellent"
 | --------------------------- | ------------------ |
 | **Programming Language**    | Python 3.8+        |
 | **Deep Learning Framework** | TensorFlow / Keras |
-| **Web Framework**           | Streamlit          |
+| **Backend & Web Framework** | Flask, Streamlit   |
 | **Data Processing**         | NumPy, Pandas      |
 | **Machine Learning**        | Scikit-learn       |
 | **Development**             | Jupyter Notebook   |
@@ -210,6 +210,10 @@ Example: "This movie was not good, but the acting was excellent"
 
 ![Workflow Diagram](assets/workflow.svg)
 
+### System Architecture
+
+`Frontend (Streamlit) → Flask API → LSTM Model → Prediction`
+
 ### End-to-End Pipeline
 
 ```
@@ -217,12 +221,18 @@ Example: "This movie was not good, but the acting was excellent"
 │   Dataset    │────▶│ Tokenization │────▶│   Padding    │────▶│ LSTM Model   │
 │ (IMDB 50K)   │     │ (5000 words) │     │ (200 tokens) │     │   Training   │
 └──────────────┘     └──────────────┘     └──────────────┘     └──────┬───────┘
-                                                                       │
-                                                                       ▼
+                                                                      │
+                                                                      ▼
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Sentiment   │◀────│  Streamlit   │◀────│  Save Model  │◀────│  Evaluation  │
-│  Prediction  │     │     App      │     │ & Tokenizer  │     │  (Accuracy)  │
-└──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
+│    Model     │◀────│  Evaluation  │◀────│  Save Model  │◀────│  Evaluation  │
+│  Deployment  │     │  (Accuracy)  │     │ & Tokenizer  │     │  (Accuracy)  │
+└──────┬───────┘     └──────────────┘     └──────────────┘     └──────────────┘
+       │
+       ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  Flask REST  │────▶│  Streamlit   │────▶│  Sentiment   │
+│     API      │     │  Frontend    │     │  Prediction  │
+└──────────────┘     └──────────────┘     └──────────────┘
 ```
 
 ### Workflow Steps
@@ -269,7 +279,8 @@ deep-learning-sentiment-analysis/
 ├── assets/
 │   └── workflow.svg               # Project workflow diagram
 │
-├── app.py                         # Streamlit web application
+├── app.py                         # Streamlit frontend web application
+├── api.py                         # Flask REST API backend
 ├── requirements.txt               # Python dependencies
 ├── .gitignore                     # Git ignore rules
 └── README.md                      # Project documentation
@@ -360,6 +371,46 @@ pacing was terribly slow. Would not recommend."
 Sentiment: Negative 😞
 Confidence Score: 89.2%
 ```
+
+---
+
+## 🔗 Backend REST API
+
+To make this a true Full-Stack Python application, the deep learning model is exposed via a RESTful backend API using **Flask**.
+
+### Endpoint Details
+
+**URL:** `/predict`
+**Method:** `POST`
+**Content-Type:** `application/json`
+
+### Example Request
+
+```json
+{
+  "text": "This movie was absolutely fantastic! The acting was superb."
+}
+```
+
+### Example Response (Success - 200 OK)
+
+```json
+{
+  "sentiment": "Positive 😊",
+  "confidence": 94.7,
+  "raw_score": 0.9472
+}
+```
+
+### Example Response (Error - 400 Bad Request)
+
+```json
+{
+  "error": "Empty input text provided"
+}
+```
+
+This REST API architecture ensures that any decoupled frontend (React, Vue, or Streamlit) can easily integrate and receive real-time sentiment predictions!
 
 ---
 
